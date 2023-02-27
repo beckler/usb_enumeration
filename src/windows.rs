@@ -62,7 +62,7 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                     SetupDiGetDeviceRegistryPropertyW(
                         dev_info,
                         &mut dev_info_data,
-                        SPDRP_DEVICEDESC,
+                        SPDRP_FRIENDLYNAME,
                         null_mut(),
                         buf.as_mut_ptr(),
                         buf.len() as u32,
