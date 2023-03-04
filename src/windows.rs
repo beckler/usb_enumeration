@@ -73,7 +73,7 @@ fn get_instance_id(dev_info: isize, devinfo_data: &mut SP_DEVINFO_DATA) -> Optio
 }
 
 fn extract_vid_pid(
-    hardware_id: Option<String>,
+    hardware_id: &Option<String>,
 ) -> Result<(u16, u16), Box<dyn Error + Send + Sync>> {
     match hardware_id {
         Some(id) => {
@@ -123,9 +123,9 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
         let hardware_id = get_instance_id(dev_info, &mut devinfo_data);
 
         // validate the hardware id and extract info
-        match extract_vid_pid(hardware_id) {
+        match extract_vid_pid(&hardware_id) {
             Ok((vendor_id, product_id)) => output.push(UsbDevice {
-                id: hardware_id.unwrap(),
+                id: hardware_id.unwrap().clone(),
                 vendor_id,
                 product_id,
                 description: get_device_registry_property(
