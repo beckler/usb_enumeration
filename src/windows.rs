@@ -125,7 +125,7 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
         // validate the hardware id and extract info
         match extract_vid_pid(&hardware_id) {
             Ok((vendor_id, product_id)) => output.push(UsbDevice {
-                id: hardware_id.unwrap().clone(),
+                id: hardware_id.clone().unwrap(),
                 vendor_id,
                 product_id,
                 description: get_device_registry_property(
