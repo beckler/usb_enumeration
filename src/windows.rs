@@ -71,7 +71,7 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                     )
                 } > 0
                 {
-                    let description = string_from_buf_u8(buf[0..expected_size]);
+                    let description = string_from_buf_u8(buf[0..expected_size as usize]);
 
                     let mut buf: Vec<u16> = vec![0; 1000];
 
@@ -85,7 +85,7 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                         )
                     } > 0
                     {
-                        let output = buf[0..expected_size];
+                        let output = buf[0..expected_size as usize];
                         let id = string_from_buf_u16(output.clone());
                         let serial_number = extract_serial_number(output);
                         output.push(UsbDevice {
