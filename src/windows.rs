@@ -1,141 +1,149 @@
+use windows_sys::{
+    core::GUID,
+    Win32::{
+        Devices::DeviceAndDriverInstallation::{
+            SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
+            SetupDiGetDeviceInstanceIdA, SetupDiGetDeviceRegistryPropertyW, DIGCF_ALLCLASSES,
+            DIGCF_PRESENT, SPDRP_FRIENDLYNAME, SPDRP_HARDWAREID, SP_DEVINFO_DATA,
+        },
+        Foundation::{GetLastError, MAX_PATH},
+        System::Diagnostics::Debug::{
+            FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS,
+        },
+    },
+};
+
 use crate::common::*;
 use std::{
     error::Error,
-    ffi::OsStr,
+    ffi::{CStr, OsStr},
     mem::size_of,
     os::windows::ffi::OsStrExt,
     ptr::{null, null_mut},
 };
-use winapi::um::setupapi::*;
+
+fn get_device_registry_property(
+    dev_info: isize,
+    devinfo_data: &mut SP_DEVINFO_DATA,
+    property: u32,
+) -> Option<String> {
+    let mut buffer: Vec<u16> = vec![0; MAX_PATH as usize];
+
+    if unsafe {
+        SetupDiGetDeviceRegistryPropertyW(
+            dev_info,
+            devinfo_data,
+            property,
+            null_mut(),
+            buffer.as_mut_ptr() as *mut u8,
+            buffer.len() as u32,
+            null_mut(),
+        )
+    } < 1
+    {
+        println!("{}", get_last_error());
+        return None;
+    }
+
+    // convert our buffer to a string
+    String::from_utf16_lossy(&buffer)
+        .trim_end_matches(0 as char)
+        .split(';')
+        .last()
+        .map(str::to_string)
+}
+
+fn get_instance_id(dev_info: isize, devinfo_data: &mut SP_DEVINFO_DATA) -> Option<String> {
+    let mut buffer: Vec<u8> = vec![0u8; MAX_PATH as usize];
+    if unsafe {
+        SetupDiGetDeviceInstanceIdA(
+            dev_info,
+            devinfo_data,
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            null_mut(),
+        )
+    } < 1
+    {
+        // Try to retrieve hardware id property.
+        get_device_registry_property(dev_info, devinfo_data, SPDRP_HARDWAREID)
+    } else {
+        Some(unsafe {
+            CStr::from_ptr(buffer.as_ptr() as *mut i8)
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+}
+
+fn extract_vid_pid(
+    hardware_id: Option<String>,
+) -> Result<(u16, u16), Box<dyn Error + Send + Sync>> {
+    match hardware_id {
+        Some(id) => {
+            let vid = id.find("VID_").ok_or(ParseError)?;
+            let pid = id.find("PID_").ok_or(ParseError)?;
+
+            Ok((
+                u16::from_str_radix(&id[vid + 4..vid + 8], 16)?,
+                u16::from_str_radix(&id[pid + 4..pid + 8], 16)?,
+            ))
+        }
+        None => Err(Box::new(ParseError)),
+    }
+}
+
+fn extract_serial_number(hardware_id: String) -> Option<String> {
+    hardware_id.split("\\").last().map(|s| s.to_owned())
+}
 
 pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> {
     let mut output: Vec<UsbDevice> = Vec::new();
+    let usb_enum: Vec<u16> = OsStr::new("USB\0").encode_wide().collect();
 
-    let usb: Vec<u16> = OsStr::new("USB\0").encode_wide().collect();
+    // collect all usb devices
     let dev_info = unsafe {
         SetupDiGetClassDevsW(
             null(),
-            usb.as_ptr(),
-            null_mut(),
+            usb_enum.as_ptr(),
+            0,
             DIGCF_ALLCLASSES | DIGCF_PRESENT,
         )
     };
 
-    let mut dev_info_data = SP_DEVINFO_DATA {
+    // this is the shared struct that is use in each interation for the enumeration of usb devices
+    let mut devinfo_data = SP_DEVINFO_DATA {
         cbSize: size_of::<SP_DEVINFO_DATA>() as u32,
-        ..Default::default()
+        ClassGuid: GUID::from_u128(0),
+        DevInst: 0,
+        Reserved: 0,
     };
 
     let mut i = 0;
-    while unsafe { SetupDiEnumDeviceInfo(dev_info, i, &mut dev_info_data) } > 0 {
+    while unsafe { SetupDiEnumDeviceInfo(dev_info, i, &mut devinfo_data) } > 0 {
         i += 1;
-        let mut buf: Vec<u8> = vec![0; 1000];
 
-        if unsafe {
-            SetupDiGetDeviceRegistryPropertyW(
-                dev_info,
-                &mut dev_info_data,
-                SPDRP_HARDWAREID,
-                null_mut(),
-                buf.as_mut_ptr(),
-                buf.len() as u32,
-                null_mut(),
-            )
-        } > 0
-        {
-            if let Ok((vendor_id, product_id)) = extract_vid_pid(buf) {
-                if let Some(vid) = vid {
-                    if vid != vendor_id {
-                        continue;
-                    }
-                }
+        // get the hardward instance id
+        let hardware_id = get_instance_id(dev_info, &mut devinfo_data);
 
-                if let Some(pid) = pid {
-                    if pid != product_id {
-                        continue;
-                    }
-                }
-
-                buf = vec![0; 1000];
-                let mut expected_size: u32 = 0;
-
-                if unsafe {
-                    SetupDiGetDeviceRegistryPropertyW(
-                        dev_info,
-                        &mut dev_info_data,
-                        SPDRP_FRIENDLYNAME,
-                        null_mut(),
-                        buf.as_mut_ptr(),
-                        buf.len() as u32,
-                        &mut expected_size,
-                    )
-                } > 0
-                {
-                    let description = string_from_buf_u8(buf[0..expected_size as usize].to_vec());
-
-                    let mut buf: Vec<u16> = vec![0; 1000];
-
-                    if unsafe {
-                        SetupDiGetDeviceInstanceIdW(
-                            dev_info,
-                            &mut dev_info_data,
-                            buf.as_mut_ptr(),
-                            buf.len() as u32,
-                            &mut expected_size,
-                        )
-                    } > 0
-                    {
-                        let trimmed = buf[0..expected_size as usize].to_vec();
-                        let id = string_from_buf_u16(trimmed.clone());
-                        let serial_number = extract_serial_number(trimmed);
-                        output.push(UsbDevice {
-                            id,
-                            vendor_id,
-                            product_id,
-                            description: Some(description),
-                            serial_number,
-                        });
-                    }
-                }
-            }
+        // validate the hardware id and extract info
+        match extract_vid_pid(hardware_id) {
+            Ok((vendor_id, product_id)) => output.push(UsbDevice {
+                id: hardware_id.unwrap(),
+                vendor_id,
+                product_id,
+                description: get_device_registry_property(
+                    dev_info,
+                    &mut devinfo_data,
+                    SPDRP_FRIENDLYNAME,
+                ),
+                serial_number: extract_serial_number(hardware_id.unwrap()),
+            }),
+            Err(_) => todo!(),
         }
     }
 
     unsafe { SetupDiDestroyDeviceInfoList(dev_info) };
 
     output
-}
-
-fn extract_vid_pid(buf: Vec<u8>) -> Result<(u16, u16), Box<dyn Error + Send + Sync>> {
-    let id = string_from_buf_u8(buf).to_uppercase();
-
-    let vid = id.find("VID_").ok_or(ParseError)?;
-    let pid = id.find("PID_").ok_or(ParseError)?;
-
-    Ok((
-        u16::from_str_radix(&id[vid + 4..vid + 8], 16)?,
-        u16::from_str_radix(&id[pid + 4..pid + 8], 16)?,
-    ))
-}
-
-fn extract_serial_number(buf: Vec<u16>) -> Option<String> {
-    let id = string_from_buf_u16(buf);
-
-    id.split("\\").last().map(|s| s.to_owned())
-}
-
-fn string_from_buf_u16(buf: Vec<u16>) -> String {
-    String::from_utf16_lossy(&buf)
-        .trim_end_matches(0 as char)
-        .to_string()
-}
-
-fn string_from_buf_u8(buf: Vec<u8>) -> String {
-    let str_vec: Vec<u16> = buf
-        .chunks_exact(2)
-        .into_iter()
-        .map(|a| u16::from_ne_bytes([a[0], a[1]]))
-        .collect();
-
-    string_from_buf_u16(str_vec)
 }
