@@ -71,7 +71,7 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                     )
                 } > 0
                 {
-                    let description = string_from_buf_u8(buf[0..expected_size as usize]);
+                    let description = string_from_buf_u8(buf[0..expected_size as usize].to_vec());
 
                     let mut buf: Vec<u16> = vec![0; 1000];
 
