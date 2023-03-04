@@ -7,9 +7,6 @@ use windows_sys::{
             DIGCF_PRESENT, SPDRP_FRIENDLYNAME, SPDRP_HARDWAREID, SP_DEVINFO_DATA,
         },
         Foundation::{GetLastError, MAX_PATH},
-        System::Diagnostics::Debug::{
-            FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS,
-        },
     },
 };
 
@@ -41,7 +38,6 @@ fn get_device_registry_property(
         )
     } < 1
     {
-        println!("{}", get_last_error());
         return None;
     }
 
