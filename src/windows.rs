@@ -72,21 +72,14 @@ fn get_instance_id(dev_info: isize, devinfo_data: &mut SP_DEVINFO_DATA) -> Optio
     }
 }
 
-fn extract_vid_pid(
-    hardware_id: &Option<String>,
-) -> Result<(u16, u16), Box<dyn Error + Send + Sync>> {
-    match hardware_id {
-        Some(id) => {
-            let vid = id.find("VID_").ok_or(ParseError)?;
-            let pid = id.find("PID_").ok_or(ParseError)?;
+fn extract_vid_pid(hardware_id: &String) -> Result<(u16, u16), Box<dyn Error + Send + Sync>> {
+    let vid = hardware_id.find("VID_").ok_or(ParseError)?;
+    let pid = hardware_id.find("PID_").ok_or(ParseError)?;
 
-            Ok((
-                u16::from_str_radix(&id[vid + 4..vid + 8], 16)?,
-                u16::from_str_radix(&id[pid + 4..pid + 8], 16)?,
-            ))
-        }
-        None => Err(Box::new(ParseError)),
-    }
+    Ok((
+        u16::from_str_radix(&hardware_id[vid + 4..vid + 8], 16)?,
+        u16::from_str_radix(&hardware_id[pid + 4..pid + 8], 16)?,
+    ))
 }
 
 fn extract_serial_number(hardware_id: String) -> Option<String> {
@@ -120,22 +113,27 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
         i += 1;
 
         // get the hardward instance id
-        let hardware_id = get_instance_id(dev_info, &mut devinfo_data);
-
-        // validate the hardware id and extract info
-        match extract_vid_pid(&hardware_id) {
-            Ok((vendor_id, product_id)) => output.push(UsbDevice {
-                id: hardware_id.clone().unwrap(),
-                vendor_id,
-                product_id,
-                description: get_device_registry_property(
-                    dev_info,
-                    &mut devinfo_data,
-                    SPDRP_FRIENDLYNAME,
-                ),
-                serial_number: extract_serial_number(hardware_id.unwrap()),
-            }),
-            Err(_) => todo!(),
+        match get_instance_id(dev_info, &mut devinfo_data) {
+            Some(hardware_id) => {
+                // validate the hardware id and extract info
+                match extract_vid_pid(&hardware_id) {
+                    Ok((vendor_id, product_id)) => output.push(UsbDevice {
+                        id: hardware_id.clone(),
+                        vendor_id,
+                        product_id,
+                        description: get_device_registry_property(
+                            dev_info,
+                            &mut devinfo_data,
+                            SPDRP_FRIENDLYNAME,
+                        ),
+                        serial_number: extract_serial_number(hardware_id),
+                    }),
+                    Err(err) => {
+                        println!("error: {:?}", err);
+                    }
+                }
+            }
+            None => (), // do nothing?
         }
     }
 
