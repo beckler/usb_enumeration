@@ -87,7 +87,7 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                     {
                         let trimmed = buf[0..expected_size as usize];
                         let id = string_from_buf_u16(trimmed.clone());
-                        let serial_number = extract_serial_number(trimmed);
+                        let serial_number = extract_serial_number(trimmed.as_vec());
                         output.push(UsbDevice {
                             id,
                             vendor_id,
