@@ -57,6 +57,7 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                 }
 
                 buf = vec![0; 1000];
+                let mut expected_size: u32 = 0;
 
                 if unsafe {
                     SetupDiGetDeviceRegistryPropertyW(
@@ -66,11 +67,11 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                         null_mut(),
                         buf.as_mut_ptr(),
                         buf.len() as u32,
-                        null_mut(),
+                        &mut expected_size,
                     )
                 } > 0
                 {
-                    let description = string_from_buf_u8(buf);
+                    let description = string_from_buf_u8(buf[0..expected_size]);
 
                     let mut buf: Vec<u16> = vec![0; 1000];
 
@@ -80,12 +81,13 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
                             &mut dev_info_data,
                             buf.as_mut_ptr(),
                             buf.len() as u32,
-                            null_mut(),
+                            &mut expected_size,
                         )
                     } > 0
                     {
-                        let id = string_from_buf_u16(buf.clone());
-                        let serial_number = extract_serial_number(buf);
+                        let output = buf[0..expected_size];
+                        let id = string_from_buf_u16(output.clone());
+                        let serial_number = extract_serial_number(output);
                         output.push(UsbDevice {
                             id,
                             vendor_id,
@@ -123,13 +125,9 @@ fn extract_serial_number(buf: Vec<u16>) -> Option<String> {
 }
 
 fn string_from_buf_u16(buf: Vec<u16>) -> String {
-    let mut out = String::from_utf16_lossy(&buf);
-
-    if let Some(i) = out.find('\u{0}') {
-        out.truncate(i);
-    }
-
-    out
+    String::from_utf16_lossy(&buf)
+        .trim_end_matches(0 as char)
+        .to_string()
 }
 
 fn string_from_buf_u8(buf: Vec<u8>) -> String {
