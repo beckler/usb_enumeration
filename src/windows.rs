@@ -1,12 +1,16 @@
 use windows_sys::{
     core::GUID,
     Win32::{
-        Devices::DeviceAndDriverInstallation::{
-            SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
-            SetupDiGetDeviceInstanceIdA, SetupDiGetDeviceRegistryPropertyW, DIGCF_ALLCLASSES,
-            DIGCF_PRESENT, SPDRP_FRIENDLYNAME, SPDRP_HARDWAREID, SP_DEVINFO_DATA,
+        Devices::{
+            DeviceAndDriverInstallation::{
+                SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
+                SetupDiGetDeviceInstanceIdA, SetupDiGetDevicePropertyW,
+                SetupDiGetDeviceRegistryPropertyW, DIGCF_ALLCLASSES, DIGCF_PRESENT,
+                SPDRP_FRIENDLYNAME, SPDRP_HARDWAREID, SP_DEVINFO_DATA,
+            },
+            Properties::{DEVPKEY_Device_BusReportedDeviceDesc, DEVPROPKEY},
         },
-        Foundation::{GetLastError, MAX_PATH},
+        Foundation::MAX_PATH,
     },
 };
 
@@ -18,6 +22,38 @@ use std::{
     os::windows::ffi::OsStrExt,
     ptr::{null, null_mut},
 };
+
+fn get_device_property(
+    dev_info: isize,
+    devinfo_data: &mut SP_DEVINFO_DATA,
+    property: &DEVPROPKEY,
+) -> Option<String> {
+    let mut buffer: Vec<u16> = vec![0u16; MAX_PATH as usize];
+    let mut output_type: u32 = 0u32;
+    let mut required_size: u32 = 0u32;
+    if unsafe {
+        SetupDiGetDevicePropertyW(
+            dev_info,
+            devinfo_data,
+            property,
+            &mut output_type,
+            buffer.as_mut_ptr() as *mut u8,
+            buffer.len() as u32,
+            &mut required_size,
+            0,
+        )
+    } < 1
+    {
+        return None;
+    };
+
+    // convert our buffer to a string
+    Some(
+        String::from_utf16_lossy(&buffer[0..required_size as usize])
+            .trim_end_matches(0 as char)
+            .to_string(),
+    )
+}
 
 fn get_device_registry_property(
     dev_info: isize,
@@ -115,22 +151,40 @@ pub fn enumerate_platform(vid: Option<u16>, pid: Option<u16>) -> Vec<UsbDevice> 
         // get the hardward instance id
         match get_instance_id(dev_info, &mut devinfo_data) {
             Some(hardware_id) => {
-                // validate the hardware id and extract info
-                match extract_vid_pid(&hardware_id) {
-                    Ok((vendor_id, product_id)) => output.push(UsbDevice {
+                // validate the hardware id
+                if let Ok((vendor_id, product_id)) = extract_vid_pid(&hardware_id) {
+                    if let Some(vid) = vid {
+                        if vid != vendor_id {
+                            continue;
+                        }
+                    }
+
+                    if let Some(pid) = pid {
+                        if pid != product_id {
+                            continue;
+                        }
+                    }
+
+                    // get the description - if there is no description, attempt to get the bus description
+                    let description = get_device_registry_property(
+                        dev_info,
+                        &mut devinfo_data,
+                        SPDRP_FRIENDLYNAME,
+                    )
+                    .or(get_device_property(
+                        dev_info,
+                        &mut devinfo_data,
+                        &DEVPKEY_Device_BusReportedDeviceDesc,
+                    ));
+
+                    // add the device to our output
+                    output.push(UsbDevice {
                         id: hardware_id.clone(),
                         vendor_id,
                         product_id,
-                        description: get_device_registry_property(
-                            dev_info,
-                            &mut devinfo_data,
-                            SPDRP_FRIENDLYNAME,
-                        ),
+                        description,
                         serial_number: extract_serial_number(hardware_id),
-                    }),
-                    Err(err) => {
-                        println!("error: {:?}", err);
-                    }
+                    });
                 }
             }
             None => (), // do nothing?
